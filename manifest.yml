@@ -1,0 +1,5 @@
+applications:
+   - name: daytrader8-sjs
+     path: target/LibertyProject.zip
+     memory: 512M
+     instances: 1
