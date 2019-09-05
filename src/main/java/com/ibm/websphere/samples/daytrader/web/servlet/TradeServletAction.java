@@ -375,8 +375,11 @@ public class TradeServletAction implements Serializable {
 					kafkaProducer = new KafkaProducer<>(props);
 				}
 
+				//set to false to disable Kafka producer 
+				boolean doKafka = true;
+
 				// send login message to Kafka
-				if (kafkaProducer != null) {
+				if (doKafka == true && kafkaProducer != null) {
 					try {
 						// Create a producer record which will be sent
 						// to the Event Streams service, providing the topic
