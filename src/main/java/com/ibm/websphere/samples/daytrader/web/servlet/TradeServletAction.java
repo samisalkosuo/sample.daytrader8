@@ -18,9 +18,14 @@ package com.ibm.websphere.samples.daytrader.web.servlet;
 import java.io.IOException;
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.Iterator;
+import java.util.Properties;
+import java.util.TimeZone;
 
 import javax.enterprise.context.SessionScoped;
 import javax.enterprise.inject.Any;
@@ -32,17 +37,19 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 
-import com.ibm.websphere.samples.daytrader.interfaces.Trace;
-import com.ibm.websphere.samples.daytrader.interfaces.TradeServices;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+
 import com.ibm.websphere.samples.daytrader.entities.AccountDataBean;
 import com.ibm.websphere.samples.daytrader.entities.AccountProfileDataBean;
 import com.ibm.websphere.samples.daytrader.entities.HoldingDataBean;
 import com.ibm.websphere.samples.daytrader.entities.OrderDataBean;
 import com.ibm.websphere.samples.daytrader.entities.QuoteDataBean;
+import com.ibm.websphere.samples.daytrader.interfaces.Trace;
+import com.ibm.websphere.samples.daytrader.interfaces.TradeServices;
 import com.ibm.websphere.samples.daytrader.util.Log;
 import com.ibm.websphere.samples.daytrader.util.TradeConfig;
 import com.ibm.websphere.samples.daytrader.util.TradeRunTimeModeLiteral;
-
 
 /**
  * TradeServletAction provides servlet specific client side access to each of
@@ -57,598 +64,714 @@ import com.ibm.websphere.samples.daytrader.util.TradeRunTimeModeLiteral;
 @Trace
 public class TradeServletAction implements Serializable {
 
-  private static final long serialVersionUID = 7732313125198761455L;
+	private static final long serialVersionUID = 7732313125198761455L;
 
-  private TradeServices tAction;  
+	private TradeServices tAction;
 
-  @Inject 
-  public TradeServletAction(@Any Instance<TradeServices> services) {
-    tAction = services.select(new TradeRunTimeModeLiteral(TradeConfig.getRunTimeModeNames()[TradeConfig.getRunTimeMode()])).get();
-  }
+	private String KAFKA_TOPIC = "daytrader-logins";
+	private KafkaProducer<String, String> kafkaProducer = null;
 
-  public TradeServletAction() {
-  }
+	@Inject
+	public TradeServletAction(@Any Instance<TradeServices> services) {
+		tAction = services
+				.select(new TradeRunTimeModeLiteral(TradeConfig.getRunTimeModeNames()[TradeConfig.getRunTimeMode()]))
+				.get();
 
-  /**
-   * Display User Profile information such as address, email, etc. for the
-   * given Trader Dispatch to the Trade Account JSP for display
-   *
-   * @param userID
-   *            The User to display profile info
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @param results
-   *            A short description of the results/success of this web request
-   *            provided on the web page
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doAccount(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String results) throws javax.servlet.ServletException,
-  java.io.IOException {
-    try {
+		// Initialize Kafka producer
+		KAFKA_TOPIC = System.getenv("KAFKA_TOPIC");
+		String broker = System.getenv("KAFKA_BOOTSTRAP_SERVER");
+		String apikey = System.getenv("KAFKA_API_KEY");
+		if (broker != null && apikey != null) {
+			Properties props = getClientConfiguration(broker, apikey);
+			// Initialise Kafka Producer
+			kafkaProducer = new KafkaProducer<>(props);
+		}
+	}
 
-      AccountDataBean accountData = tAction.getAccountData(userID);
-      AccountProfileDataBean accountProfileData = tAction.getAccountProfileData(userID);
-      Collection<?> orderDataBeans = (TradeConfig.getLongRun() ? new ArrayList<Object>() : (Collection<?>) tAction.getOrders(userID));
+	public TradeServletAction() {
+	}
 
-      req.setAttribute("accountData", accountData);
-      req.setAttribute("accountProfileData", accountProfileData);
-      req.setAttribute("orderDataBeans", orderDataBeans);
-      req.setAttribute("results", results);
-      requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.ACCOUNT_PAGE));
-    } catch (java.lang.IllegalArgumentException e) { // this is a user
-      // error so I will
-      // forward them to another page rather than throw a 500
-      req.setAttribute("results", results + "could not find account for userID = " + userID);
-      requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.HOME_PAGE));
-      // log the exception with an error level of 3 which means, handled
-      // exception but would invalidate a automation run
-      Log.error("TradeServletAction.doAccount(...)", "illegal argument, information should be in exception string", e);
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.doAccount(...)" + " exception user =" + userID, e);
-    }
+	/**
+	 * Display User Profile information such as address, email, etc. for the
+	 * given Trader Dispatch to the Trade Account JSP for display
+	 *
+	 * @param userID
+	 *            The User to display profile info
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @param results
+	 *            A short description of the results/success of this web request
+	 *            provided on the web page
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doAccount(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String results)
+			throws javax.servlet.ServletException, java.io.IOException {
+		try {
 
-  }
+			AccountDataBean accountData = tAction.getAccountData(userID);
+			AccountProfileDataBean accountProfileData = tAction.getAccountProfileData(userID);
+			Collection<?> orderDataBeans = (TradeConfig.getLongRun() ? new ArrayList<Object>()
+					: (Collection<?>) tAction.getOrders(userID));
 
-  /**
-   * Update User Profile information such as address, email, etc. for the
-   * given Trader Dispatch to the Trade Account JSP for display If any in put
-   * is incorrect revert back to the account page w/ an appropriate message
-   *
-   * @param userID
-   *            The User to upddate profile info
-   * @param password
-   *            The new User password
-   * @param cpassword
-   *            Confirm password
-   * @param fullname
-   *            The new User fullname info
-   * @param address
-   *            The new User address info
-   * @param cc
-   *            The new User credit card info
-   * @param email
-   *            The new User email info
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doAccountUpdate(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String password, String cpassword,
-      String fullName, String address, String creditcard, String email) throws javax.servlet.ServletException, java.io.IOException {
-    String results = "";
+			req.setAttribute("accountData", accountData);
+			req.setAttribute("accountProfileData", accountProfileData);
+			req.setAttribute("orderDataBeans", orderDataBeans);
+			req.setAttribute("results", results);
+			requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.ACCOUNT_PAGE));
+		} catch (java.lang.IllegalArgumentException e) { // this is a user
+			// error so I will
+			// forward them to another page rather than throw a 500
+			req.setAttribute("results", results + "could not find account for userID = " + userID);
+			requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.HOME_PAGE));
+			// log the exception with an error level of 3 which means, handled
+			// exception but would invalidate a automation run
+			Log.error("TradeServletAction.doAccount(...)",
+					"illegal argument, information should be in exception string", e);
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException("TradeServletAction.doAccount(...)" + " exception user =" + userID, e);
+		}
 
-    // First verify input data
-    boolean doUpdate = true;
-    if (password.equals(cpassword) == false) {
-      results = "Update profile error: passwords do not match";
-      doUpdate = false;
-    } else if (password.length() <= 0 || fullName.length() <= 0 || address.length() <= 0 || creditcard.length() <= 0 || email.length() <= 0) {
-      results = "Update profile error: please fill in all profile information fields";
-      doUpdate = false;
-    }
-    AccountProfileDataBean accountProfileData = new AccountProfileDataBean(userID, password, fullName, address, email, creditcard);
-    try {
-      if (doUpdate) {
-        accountProfileData = tAction.updateAccountProfile(accountProfileData);
-        results = "Account profile update successful";
-      }
+	}
 
-    } catch (java.lang.IllegalArgumentException e) { // this is a user
-      // error so I will
-      // forward them to another page rather than throw a 500
-      req.setAttribute("results", results + "invalid argument, check userID is correct, and the database is populated" + userID);
-      Log.error(e, "TradeServletAction.doAccount(...)", "illegal argument, information should be in exception string",
-          "treating this as a user error and forwarding on to a new page");
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.doAccountUpdate(...)" + " exception user =" + userID, e);
-    }
-    doAccount(ctx, req, resp, userID, results);
-  }
+	/**
+	 * Update User Profile information such as address, email, etc. for the
+	 * given Trader Dispatch to the Trade Account JSP for display If any in put
+	 * is incorrect revert back to the account page w/ an appropriate message
+	 *
+	 * @param userID
+	 *            The User to upddate profile info
+	 * @param password
+	 *            The new User password
+	 * @param cpassword
+	 *            Confirm password
+	 * @param fullname
+	 *            The new User fullname info
+	 * @param address
+	 *            The new User address info
+	 * @param cc
+	 *            The new User credit card info
+	 * @param email
+	 *            The new User email info
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doAccountUpdate(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID,
+			String password, String cpassword, String fullName, String address, String creditcard, String email)
+			throws javax.servlet.ServletException, java.io.IOException {
+		String results = "";
 
-  /**
-   * Buy a new holding of shares for the given trader Dispatch to the Trade
-   * Portfolio JSP for display
-   *
-   * @param userID
-   *            The User buying shares
-   * @param symbol
-   *            The stock to purchase
-   * @param amount
-   *            The quantity of shares to purchase
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doBuy(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String symbol, String quantity) throws ServletException,
-  IOException {
+		// First verify input data
+		boolean doUpdate = true;
+		if (password.equals(cpassword) == false) {
+			results = "Update profile error: passwords do not match";
+			doUpdate = false;
+		} else if (password.length() <= 0 || fullName.length() <= 0 || address.length() <= 0 || creditcard.length() <= 0
+				|| email.length() <= 0) {
+			results = "Update profile error: please fill in all profile information fields";
+			doUpdate = false;
+		}
+		AccountProfileDataBean accountProfileData = new AccountProfileDataBean(userID, password, fullName, address,
+				email, creditcard);
+		try {
+			if (doUpdate) {
+				accountProfileData = tAction.updateAccountProfile(accountProfileData);
+				results = "Account profile update successful";
+			}
 
-    String results = "";
+		} catch (java.lang.IllegalArgumentException e) { // this is a user
+			// error so I will
+			// forward them to another page rather than throw a 500
+			req.setAttribute("results",
+					results + "invalid argument, check userID is correct, and the database is populated" + userID);
+			Log.error(e, "TradeServletAction.doAccount(...)",
+					"illegal argument, information should be in exception string",
+					"treating this as a user error and forwarding on to a new page");
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException("TradeServletAction.doAccountUpdate(...)" + " exception user =" + userID, e);
+		}
+		doAccount(ctx, req, resp, userID, results);
+	}
 
-    try {
+	/**
+	 * Buy a new holding of shares for the given trader Dispatch to the Trade
+	 * Portfolio JSP for display
+	 *
+	 * @param userID
+	 *            The User buying shares
+	 * @param symbol
+	 *            The stock to purchase
+	 * @param amount
+	 *            The quantity of shares to purchase
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doBuy(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String symbol,
+			String quantity) throws ServletException, IOException {
 
-      OrderDataBean orderData = tAction.buy(userID, symbol, new Double(quantity).doubleValue(), TradeConfig.getOrderProcessingMode());
+		String results = "";
 
-      req.setAttribute("orderData", orderData);
-      req.setAttribute("results", results);
-    } catch (java.lang.IllegalArgumentException e) { // this is a user
-      // error so I will
-      // forward them to another page rather than throw a 500
-      req.setAttribute("results", results + "illegal argument:");
-      requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.HOME_PAGE));
-      // log the exception with an error level of 3 which means, handled
-      // exception but would invalidate a automation run
-      Log.error(e, "TradeServletAction.doBuy(...)", "illegal argument. userID = " + userID, "symbol = " + symbol);
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.buy(...)" + " exception buying stock " + symbol + " for user " + userID, e);
-    }
-    requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.ORDER_PAGE));
-  }
+		try {
 
-  /**
-   * Create the Trade Home page with personalized information such as the
-   * traders account balance Dispatch to the Trade Home JSP for display
-   *
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @param results
-   *            A short description of the results/success of this web request
-   *            provided on the web page
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doHome(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String results) throws javax.servlet.ServletException,
-  java.io.IOException {
+			OrderDataBean orderData = tAction.buy(userID, symbol, new Double(quantity).doubleValue(),
+					TradeConfig.getOrderProcessingMode());
 
-    try {
-      AccountDataBean accountData = tAction.getAccountData(userID);
-      Collection<?> holdingDataBeans = tAction.getHoldings(userID);
+			req.setAttribute("orderData", orderData);
+			req.setAttribute("results", results);
+		} catch (java.lang.IllegalArgumentException e) { // this is a user
+			// error so I will
+			// forward them to another page rather than throw a 500
+			req.setAttribute("results", results + "illegal argument:");
+			requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.HOME_PAGE));
+			// log the exception with an error level of 3 which means, handled
+			// exception but would invalidate a automation run
+			Log.error(e, "TradeServletAction.doBuy(...)", "illegal argument. userID = " + userID, "symbol = " + symbol);
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException(
+					"TradeServletAction.buy(...)" + " exception buying stock " + symbol + " for user " + userID, e);
+		}
+		requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.ORDER_PAGE));
+	}
 
-      // Edge Caching:
-      // Getting the MarketSummary has been moved to the JSP
-      // MarketSummary.jsp. This makes the MarketSummary a
-      // standalone "fragment", and thus is a candidate for
-      // Edge caching.
-      // marketSummaryData = tAction.getMarketSummary();
+	/**
+	 * Create the Trade Home page with personalized information such as the
+	 * traders account balance Dispatch to the Trade Home JSP for display
+	 *
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @param results
+	 *            A short description of the results/success of this web request
+	 *            provided on the web page
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doHome(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String results)
+			throws javax.servlet.ServletException, java.io.IOException {
 
-      req.setAttribute("accountData", accountData);
-      req.setAttribute("holdingDataBeans", holdingDataBeans);
-      // See Edge Caching above
-      // req.setAttribute("marketSummaryData", marketSummaryData);
-      req.setAttribute("results", results);
-    } catch (java.lang.IllegalArgumentException e) { // this is a user
-      // error so I will
-      // forward them to another page rather than throw a 500
-      req.setAttribute("results", results + "check userID = " + userID + " and that the database is populated");
-      requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.HOME_PAGE));
-      // log the exception with an error level of 3 which means, handled
-      // exception but would invalidate a automation run
-      Log.error("TradeServletAction.doHome(...)" + "illegal argument, information should be in exception string"
-          + "treating this as a user error and forwarding on to a new page", e);
-    } catch (javax.ejb.FinderException e) {
-      // this is a user error so I will
-      // forward them to another page rather than throw a 500
-      req.setAttribute("results", results + "\nCould not find account for + " + userID);
-      // requestDispatch(ctx, req, resp,
-      // TradeConfig.getPage(TradeConfig.HOME_PAGE));
-      // log the exception with an error level of 3 which means, handled
-      // exception but would invalidate a automation run
-      Log.error("TradeServletAction.doHome(...)" + "Error finding account for user " + userID
-          + "treating this as a user error and forwarding on to a new page", e);
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.doHome(...)" + " exception user =" + userID, e);
-    }
+		try {
+			AccountDataBean accountData = tAction.getAccountData(userID);
+			Collection<?> holdingDataBeans = tAction.getHoldings(userID);
 
-    requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.HOME_PAGE));
-  }
+			// Edge Caching:
+			// Getting the MarketSummary has been moved to the JSP
+			// MarketSummary.jsp. This makes the MarketSummary a
+			// standalone "fragment", and thus is a candidate for
+			// Edge caching.
+			// marketSummaryData = tAction.getMarketSummary();
 
-  /**
-   * Login a Trade User. Dispatch to the Trade Home JSP for display
-   *
-   * @param userID
-   *            The User to login
-   * @param passwd
-   *            The password supplied by the trader used to authenticate
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @param results
-   *            A short description of the results/success of this web request
-   *            provided on the web page
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doLogin(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String passwd) throws javax.servlet.ServletException,
-  java.io.IOException {
+			req.setAttribute("accountData", accountData);
+			req.setAttribute("holdingDataBeans", holdingDataBeans);
+			// See Edge Caching above
+			// req.setAttribute("marketSummaryData", marketSummaryData);
+			req.setAttribute("results", results);
+		} catch (java.lang.IllegalArgumentException e) { // this is a user
+			// error so I will
+			// forward them to another page rather than throw a 500
+			req.setAttribute("results", results + "check userID = " + userID + " and that the database is populated");
+			requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.HOME_PAGE));
+			// log the exception with an error level of 3 which means, handled
+			// exception but would invalidate a automation run
+			Log.error("TradeServletAction.doHome(...)" + "illegal argument, information should be in exception string"
+					+ "treating this as a user error and forwarding on to a new page", e);
+		} catch (javax.ejb.FinderException e) {
+			// this is a user error so I will
+			// forward them to another page rather than throw a 500
+			req.setAttribute("results", results + "\nCould not find account for + " + userID);
+			// requestDispatch(ctx, req, resp,
+			// TradeConfig.getPage(TradeConfig.HOME_PAGE));
+			// log the exception with an error level of 3 which means, handled
+			// exception but would invalidate a automation run
+			Log.error("TradeServletAction.doHome(...)" + "Error finding account for user " + userID
+					+ "treating this as a user error and forwarding on to a new page", e);
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException("TradeServletAction.doHome(...)" + " exception user =" + userID, e);
+		}
 
-    String results = "";
-    try {
-      // Got a valid userID and passwd, attempt login
-      if (tAction==null) {
-        System.out.println("null");          }
-      AccountDataBean accountData = tAction.login(userID, passwd);
+		requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.HOME_PAGE));
+	}
 
-      if (accountData != null) {
-        HttpSession session = req.getSession(true);
-        session.setAttribute("uidBean", userID);
-        session.setAttribute("sessionCreationDate", new java.util.Date());
+	/**
+	 * Login a Trade User. Dispatch to the Trade Home JSP for display
+	 *
+	 * @param userID
+	 *            The User to login
+	 * @param passwd
+	 *            The password supplied by the trader used to authenticate
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @param results
+	 *            A short description of the results/success of this web request
+	 *            provided on the web page
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doLogin(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String passwd)
+			throws javax.servlet.ServletException, java.io.IOException {
 
-        results = "Ready to Trade";
-        doHome(ctx, req, resp, userID, results);
-        return;
-      } else {
-        req.setAttribute("results", results + "\nCould not find account for + " + userID);
-        // log the exception with an error level of 3 which means,
-        // handled exception but would invalidate a automation run
-        Log.log("TradeServletAction.doLogin(...)", "Error finding account for user " + userID + "",
-            "user entered a bad username or the database is not populated");
-      }
-    } catch (java.lang.IllegalArgumentException e) { // this is a user
-      // error so I will
-      // forward them to another page rather than throw a 500
-      req.setAttribute("results", results + "illegal argument:" + e.getMessage());
-      // log the exception with an error level of 3 which means, handled
-      // exception but would invalidate a automation run
-      Log.error(e, "TradeServletAction.doLogin(...)", "illegal argument, information should be in exception string",
-          "treating this as a user error and forwarding on to a new page");
+		String results = "";
+		try {
+			// Got a valid userID and passwd, attempt login
+			if (tAction == null) {
+				System.out.println("null");
+			}
+			AccountDataBean accountData = tAction.login(userID, passwd);
 
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.doLogin(...)" + "Exception logging in user " + userID + "with password" + passwd, e);
-    }
+			if (accountData != null) {
+				HttpSession session = req.getSession(true);
+				session.setAttribute("uidBean", userID);
+				session.setAttribute("sessionCreationDate", new java.util.Date());
 
-    requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.WELCOME_PAGE));
+				results = "Ready to Trade";
 
-  }
+				// send login message to Kafka
+				if (kafkaProducer != null) {
 
-  /**
-   * Logout a Trade User Dispatch to the Trade Welcome JSP for display
-   *
-   * @param userID
-   *            The User to logout
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @param results
-   *            A short description of the results/success of this web request
-   *            provided on the web page
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doLogout(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID) throws ServletException, IOException {
-    String results = "";
+					// Create a producer record which will be sent
+					// to the Event Streams service, providing the topic
+					// name, key and message.
+					long time = System.currentTimeMillis();
 
-    try {
-      tAction.logout(userID);
+					String key = "login";
+					String value = userID;
 
-    } catch (java.lang.IllegalArgumentException e) { // this is a user
-      // error so I will
-      // forward them to another page, at the end of the page.
-      req.setAttribute("results", results + "illegal argument:" + e.getMessage());
+					// add timestamp to value
+					/*
+					TimeZone tz = TimeZone.getTimeZone("UTC");
+					DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
+					df.setTimeZone(tz);
+					String datetime = df.format(new Date());
+					value = datetime + " - " + value;
+					*/
+					final ProducerRecord<String, String> record = new ProducerRecord<>(KAFKA_TOPIC, key, value);
 
-      // log the exception with an error level of 3 which means, handled
-      // exception but would invalidate a automation run
-      Log.error(e, "TradeServletAction.doLogout(...)", "illegal argument, information should be in exception string",
-          "treating this as a user error and forwarding on to a new page");
-    } catch (Exception e) {
-      // log the exception and foward to a error page
-      Log.error(e, "TradeServletAction.doLogout(...):", "Error logging out" + userID, "fowarding to an error page");
-      // set the status_code to 500
-      throw new ServletException("TradeServletAction.doLogout(...)" + "exception logging out user " + userID, e);
-    }
-    HttpSession session = req.getSession();
-    if (session != null) {
-      session.invalidate();
-    }
+					kafkaProducer.send(record, (metadata, exception) -> {
 
-    // Added to actually remove a user from the authentication cache
-    req.logout();
+						long elapsedTime = System.currentTimeMillis() - time;
+						if (metadata != null) {
 
-    Object o = req.getAttribute("TSS-RecreateSessionInLogout");
-    if (o != null && ((Boolean) o).equals(Boolean.TRUE)) {
-      // Recreate Session object before writing output to the response
-      // Once the response headers are written back to the client the
-      // opportunity
-      // to create a new session in this request may be lost
-      // This is to handle only the TradeScenarioServlet case
-      session = req.getSession(true);
-    }
-    requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.WELCOME_PAGE));
-  }
+							System.out.printf(
+									"sent to Kafka: record(key=%s value=%s) "
+											+ "meta(partition=%d, offset=%d) time=%d\n",
+									record.key(), record.value(), metadata.partition(), metadata.offset(), elapsedTime);
 
-  /**
-   * Retrieve the current portfolio of stock holdings for the given trader
-   * Dispatch to the Trade Portfolio JSP for display
-   *
-   * @param userID
-   *            The User requesting to view their portfolio
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @param results
-   *            A short description of the results/success of this web request
-   *            provided on the web page
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doPortfolio(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String results) throws ServletException, IOException {
+						} else {
+							exception.printStackTrace();
+						}
 
-    try {
-      // Get the holdiings for this user
+					});
+				}
 
-      Collection<QuoteDataBean> quoteDataBeans = new ArrayList<QuoteDataBean>();
-      Collection<?> holdingDataBeans = tAction.getHoldings(userID);
+				doHome(ctx, req, resp, userID, results);
+				return;
+			} else {
+				req.setAttribute("results", results + "\nCould not find account for + " + userID);
+				// log the exception with an error level of 3 which means,
+				// handled exception but would invalidate a automation run
+				Log.log("TradeServletAction.doLogin(...)", "Error finding account for user " + userID + "",
+						"user entered a bad username or the database is not populated");
+			}
+		} catch (java.lang.IllegalArgumentException e) { // this is a user
+			// error so I will
+			// forward them to another page rather than throw a 500
+			req.setAttribute("results", results + "illegal argument:" + e.getMessage());
+			// log the exception with an error level of 3 which means, handled
+			// exception but would invalidate a automation run
+			Log.error(e, "TradeServletAction.doLogin(...)",
+					"illegal argument, information should be in exception string",
+					"treating this as a user error and forwarding on to a new page");
 
-      // Walk through the collection of user
-      // holdings and creating a list of quotes
-      if (holdingDataBeans.size() > 0) {
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException("TradeServletAction.doLogin(...)" + "Exception logging in user " + userID
+					+ "with password" + passwd, e);
+		}
 
-        Iterator<?> it = holdingDataBeans.iterator();
-        while (it.hasNext()) {
-          HoldingDataBean holdingData = (HoldingDataBean) it.next();
-          QuoteDataBean quoteData = tAction.getQuote(holdingData.getQuoteID());
-          quoteDataBeans.add(quoteData);
-        }
-      } else {
-        results = results + ".  Your portfolio is empty.";
-      }
-      req.setAttribute("results", results);
-      req.setAttribute("holdingDataBeans", holdingDataBeans);
-      req.setAttribute("quoteDataBeans", quoteDataBeans);
-      requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.PORTFOLIO_PAGE));
-    } catch (java.lang.IllegalArgumentException e) { // this is a user
-      // error so I will
-      // forward them to another page rather than throw a 500
-      req.setAttribute("results", results + "illegal argument:" + e.getMessage());
-      requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.PORTFOLIO_PAGE));
-      // log the exception with an error level of 3 which means, handled
-      // exception but would invalidate a automation run
-      Log.error(e, "TradeServletAction.doPortfolio(...)", "illegal argument, information should be in exception string", "user error");
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.doPortfolio(...)" + " exception user =" + userID, e);
-    }
-  }
+		requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.WELCOME_PAGE));
 
-  /**
-   * Retrieve the current Quote for the given stock symbol Dispatch to the
-   * Trade Quote JSP for display
-   *
-   * @param userID
-   *            The stock symbol used to get the current quote
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doQuotes(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String symbols) throws ServletException, IOException {
+	}
 
-    try {
-      Collection<QuoteDataBean> quoteDataBeans = new ArrayList<QuoteDataBean>();
-      String[] symbolsSplit = symbols.split(",");
-      for (String symbol: symbolsSplit) {
-        QuoteDataBean quoteData = tAction.getQuote(symbol.trim());
-        quoteDataBeans.add(quoteData);
-      } 
-      req.setAttribute("quoteDataBeans", quoteDataBeans);
-      requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.QUOTE_PAGE));
+	/**
+	 * Logout a Trade User Dispatch to the Trade Welcome JSP for display
+	 *
+	 * @param userID
+	 *            The User to logout
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @param results
+	 *            A short description of the results/success of this web request
+	 *            provided on the web page
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doLogout(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID)
+			throws ServletException, IOException {
+		String results = "";
 
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.doQuotes(...)" + " exception user =" + userID, e);
-    } 
-  }
+		try {
+			tAction.logout(userID);
 
-  /**
-   * Register a new trader given the provided user Profile information such as
-   * address, email, etc. Dispatch to the Trade Home JSP for display
-   *
-   * @param userID
-   *            The User to create
-   * @param passwd
-   *            The User password
-   * @param fullname
-   *            The new User fullname info
-   * @param ccn
-   *            The new User credit card info
-   * @param money
-   *            The new User opening account balance
-   * @param address
-   *            The new User address info
-   * @param email
-   *            The new User email info
-   * @return The userID of the new trader
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doRegister(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String passwd, String cpasswd, String fullname,
-      String ccn, String openBalanceString, String email, String address) throws ServletException, IOException {
-    String results = "";
+		} catch (java.lang.IllegalArgumentException e) { // this is a user
+			// error so I will
+			// forward them to another page, at the end of the page.
+			req.setAttribute("results", results + "illegal argument:" + e.getMessage());
 
-    try {
-      // Validate user passwords match and are atleast 1 char in length
-      if ((passwd.equals(cpasswd)) && (passwd.length() >= 1)) {
+			// log the exception with an error level of 3 which means, handled
+			// exception but would invalidate a automation run
+			Log.error(e, "TradeServletAction.doLogout(...)",
+					"illegal argument, information should be in exception string",
+					"treating this as a user error and forwarding on to a new page");
+		} catch (Exception e) {
+			// log the exception and foward to a error page
+			Log.error(e, "TradeServletAction.doLogout(...):", "Error logging out" + userID,
+					"fowarding to an error page");
+			// set the status_code to 500
+			throw new ServletException("TradeServletAction.doLogout(...)" + "exception logging out user " + userID, e);
+		}
+		HttpSession session = req.getSession();
+		if (session != null) {
+			session.invalidate();
+		}
 
-        AccountDataBean accountData = tAction.register(userID, passwd, fullname, address, email, ccn, new BigDecimal(openBalanceString));
-        if (accountData == null) {
-          results = "Registration operation failed;";
-          System.out.println(results);
-          req.setAttribute("results", results);
-          requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.REGISTER_PAGE));
-        } else {
-          doLogin(ctx, req, resp, userID, passwd);
-          results = "Registration operation succeeded;  Account " + accountData.getAccountID() + " has been created.";
-          req.setAttribute("results", results);
+		// Added to actually remove a user from the authentication cache
+		req.logout();
 
-        }
-      } else {
-        // Password validation failed
-        results = "Registration operation failed, your passwords did not match";
-        System.out.println(results);
-        req.setAttribute("results", results);
-        requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.REGISTER_PAGE));
-      }
+		Object o = req.getAttribute("TSS-RecreateSessionInLogout");
+		if (o != null && ((Boolean) o).equals(Boolean.TRUE)) {
+			// Recreate Session object before writing output to the response
+			// Once the response headers are written back to the client the
+			// opportunity
+			// to create a new session in this request may be lost
+			// This is to handle only the TradeScenarioServlet case
+			session = req.getSession(true);
+		}
+		requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.WELCOME_PAGE));
+	}
 
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.doRegister(...)" + " exception user =" + userID, e);
-    }
-  }
+	/**
+	 * Retrieve the current portfolio of stock holdings for the given trader
+	 * Dispatch to the Trade Portfolio JSP for display
+	 *
+	 * @param userID
+	 *            The User requesting to view their portfolio
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @param results
+	 *            A short description of the results/success of this web request
+	 *            provided on the web page
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doPortfolio(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID,
+			String results) throws ServletException, IOException {
 
-  /**
-   * Sell a current holding of stock shares for the given trader. Dispatch to
-   * the Trade Portfolio JSP for display
-   *
-   * @param userID
-   *            The User buying shares
-   * @param symbol
-   *            The stock to sell
-   * @param indx
-   *            The unique index identifying the users holding to sell
-   * @param ctx
-   *            the servlet context
-   * @param req
-   *            the HttpRequest object
-   * @param resp
-   *            the HttpResponse object
-   * @exception javax.servlet.ServletException
-   *                If a servlet specific exception is encountered
-   * @exception javax.io.IOException
-   *                If an exception occurs while writing results back to the
-   *                user
-   *
-   */
-  void doSell(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, Integer holdingID) throws ServletException, IOException {
-    String results = "";
-    try {
-      OrderDataBean orderData = tAction.sell(userID, holdingID, TradeConfig.getOrderProcessingMode());
+		try {
+			// Get the holdiings for this user
 
-      req.setAttribute("orderData", orderData);
-      req.setAttribute("results", results);
-    } catch (java.lang.IllegalArgumentException e) { // this is a user
-      // error so I will
-      // just log the exception and then later on I will redisplay the
-      // portfolio page
-      // because this is just a user exception
-      Log.error(e, "TradeServletAction.doSell(...)", "illegal argument, information should be in exception string", "user error");
-    } catch (Exception e) {
-      // log the exception with error page
-      throw new ServletException("TradeServletAction.doSell(...)" + " exception selling holding " + holdingID + " for user =" + userID, e);
-    }
-    requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.ORDER_PAGE));
-  }
+			Collection<QuoteDataBean> quoteDataBeans = new ArrayList<QuoteDataBean>();
+			Collection<?> holdingDataBeans = tAction.getHoldings(userID);
 
-  void doWelcome(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String status) throws ServletException, IOException {
+			// Walk through the collection of user
+			// holdings and creating a list of quotes
+			if (holdingDataBeans.size() > 0) {
 
-    req.setAttribute("results", status);
-    requestDispatch(ctx, req, resp, null, TradeConfig.getPage(TradeConfig.WELCOME_PAGE));
-  }
+				Iterator<?> it = holdingDataBeans.iterator();
+				while (it.hasNext()) {
+					HoldingDataBean holdingData = (HoldingDataBean) it.next();
+					QuoteDataBean quoteData = tAction.getQuote(holdingData.getQuoteID());
+					quoteDataBeans.add(quoteData);
+				}
+			} else {
+				results = results + ".  Your portfolio is empty.";
+			}
+			req.setAttribute("results", results);
+			req.setAttribute("holdingDataBeans", holdingDataBeans);
+			req.setAttribute("quoteDataBeans", quoteDataBeans);
+			requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.PORTFOLIO_PAGE));
+		} catch (java.lang.IllegalArgumentException e) { // this is a user
+			// error so I will
+			// forward them to another page rather than throw a 500
+			req.setAttribute("results", results + "illegal argument:" + e.getMessage());
+			requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.PORTFOLIO_PAGE));
+			// log the exception with an error level of 3 which means, handled
+			// exception but would invalidate a automation run
+			Log.error(e, "TradeServletAction.doPortfolio(...)",
+					"illegal argument, information should be in exception string", "user error");
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException("TradeServletAction.doPortfolio(...)" + " exception user =" + userID, e);
+		}
+	}
 
-  private void requestDispatch(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String page) throws ServletException,
-  IOException {
+	/**
+	 * Retrieve the current Quote for the given stock symbol Dispatch to the
+	 * Trade Quote JSP for display
+	 *
+	 * @param userID
+	 *            The stock symbol used to get the current quote
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doQuotes(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String symbols)
+			throws ServletException, IOException {
 
-    ctx.getRequestDispatcher(page).include(req, resp);
-  }
+		try {
+			Collection<QuoteDataBean> quoteDataBeans = new ArrayList<QuoteDataBean>();
+			String[] symbolsSplit = symbols.split(",");
+			for (String symbol : symbolsSplit) {
+				QuoteDataBean quoteData = tAction.getQuote(symbol.trim());
+				quoteDataBeans.add(quoteData);
+			}
+			req.setAttribute("quoteDataBeans", quoteDataBeans);
+			requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.QUOTE_PAGE));
 
-  void doMarketSummary(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID) throws ServletException, IOException {
-    req.setAttribute("results", "test");
-    requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.MARKET_SUMMARY_PAGE));
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException("TradeServletAction.doQuotes(...)" + " exception user =" + userID, e);
+		}
+	}
 
-  }
+	/**
+	 * Register a new trader given the provided user Profile information such as
+	 * address, email, etc. Dispatch to the Trade Home JSP for display
+	 *
+	 * @param userID
+	 *            The User to create
+	 * @param passwd
+	 *            The User password
+	 * @param fullname
+	 *            The new User fullname info
+	 * @param ccn
+	 *            The new User credit card info
+	 * @param money
+	 *            The new User opening account balance
+	 * @param address
+	 *            The new User address info
+	 * @param email
+	 *            The new User email info
+	 * @return The userID of the new trader
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doRegister(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, String passwd,
+			String cpasswd, String fullname, String ccn, String openBalanceString, String email, String address)
+			throws ServletException, IOException {
+		String results = "";
+
+		try {
+			// Validate user passwords match and are atleast 1 char in length
+			if ((passwd.equals(cpasswd)) && (passwd.length() >= 1)) {
+
+				AccountDataBean accountData = tAction.register(userID, passwd, fullname, address, email, ccn,
+						new BigDecimal(openBalanceString));
+				if (accountData == null) {
+					results = "Registration operation failed;";
+					System.out.println(results);
+					req.setAttribute("results", results);
+					requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.REGISTER_PAGE));
+				} else {
+					doLogin(ctx, req, resp, userID, passwd);
+					results = "Registration operation succeeded;  Account " + accountData.getAccountID()
+							+ " has been created.";
+					req.setAttribute("results", results);
+
+				}
+			} else {
+				// Password validation failed
+				results = "Registration operation failed, your passwords did not match";
+				System.out.println(results);
+				req.setAttribute("results", results);
+				requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.REGISTER_PAGE));
+			}
+
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException("TradeServletAction.doRegister(...)" + " exception user =" + userID, e);
+		}
+	}
+
+	/**
+	 * Sell a current holding of stock shares for the given trader. Dispatch to
+	 * the Trade Portfolio JSP for display
+	 *
+	 * @param userID
+	 *            The User buying shares
+	 * @param symbol
+	 *            The stock to sell
+	 * @param indx
+	 *            The unique index identifying the users holding to sell
+	 * @param ctx
+	 *            the servlet context
+	 * @param req
+	 *            the HttpRequest object
+	 * @param resp
+	 *            the HttpResponse object
+	 * @exception javax.servlet.ServletException
+	 *                If a servlet specific exception is encountered
+	 * @exception javax.io.IOException
+	 *                If an exception occurs while writing results back to the
+	 *                user
+	 *
+	 */
+	void doSell(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID, Integer holdingID)
+			throws ServletException, IOException {
+		String results = "";
+		try {
+			OrderDataBean orderData = tAction.sell(userID, holdingID, TradeConfig.getOrderProcessingMode());
+
+			req.setAttribute("orderData", orderData);
+			req.setAttribute("results", results);
+		} catch (java.lang.IllegalArgumentException e) { // this is a user
+			// error so I will
+			// just log the exception and then later on I will redisplay the
+			// portfolio page
+			// because this is just a user exception
+			Log.error(e, "TradeServletAction.doSell(...)",
+					"illegal argument, information should be in exception string", "user error");
+		} catch (Exception e) {
+			// log the exception with error page
+			throw new ServletException("TradeServletAction.doSell(...)" + " exception selling holding " + holdingID
+					+ " for user =" + userID, e);
+		}
+		requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.ORDER_PAGE));
+	}
+
+	void doWelcome(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String status)
+			throws ServletException, IOException {
+
+		req.setAttribute("results", status);
+		requestDispatch(ctx, req, resp, null, TradeConfig.getPage(TradeConfig.WELCOME_PAGE));
+	}
+
+	private void requestDispatch(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID,
+			String page) throws ServletException, IOException {
+
+		ctx.getRequestDispatcher(page).include(req, resp);
+	}
+
+	void doMarketSummary(ServletContext ctx, HttpServletRequest req, HttpServletResponse resp, String userID)
+			throws ServletException, IOException {
+		req.setAttribute("results", "test");
+		requestDispatch(ctx, req, resp, userID, TradeConfig.getPage(TradeConfig.MARKET_SUMMARY_PAGE));
+
+	}
+
+	/**
+	 * Retrieve client configuration information, using a properties file, for
+	 * connecting to secure Kafka.
+	 *
+	 * @param broker
+	 *            {String} A string representing a list of brokers the producer
+	 *            can contact.
+	 * @param apiKey
+	 *            {String} The API key of the IBM Event Streams service.
+	 * @param isProducer
+	 *            {Boolean} Flag used to determine whether or not the
+	 *            configuration is for a producer.
+	 * @return {Properties} A properties object which stores the client
+	 *         configuration info.
+	 */
+	private Properties getClientConfiguration(String broker, String apikey) {
+		Properties props = new Properties();
+
+		props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+		props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+		props.put("bootstrap.servers", broker);
+		props.put("client.id", "daytrader-event-streams-demo");
+		props.put("acks", "-1");
+		props.put("security.protocol", "SASL_SSL");
+		props.put("sasl.mechanism", "PLAIN");
+		props.put("ssl.protocol", "TLSv1.2");
+		props.put("ssl.enabled.protocols", "TLSv1.2");
+		props.put("ssl.endpoint.identification.algorithm", "HTTPS");
+		props.put("sasl.jaas.config",
+				"org.apache.kafka.common.security.plain.PlainLoginModule required username=\"token\" password=\""
+						+ apikey + "\";");
+		props.put("client.dns.lookup", "use_all_dns_ips");
+
+		return props;
+	}
 }
