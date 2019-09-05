@@ -69,7 +69,8 @@ public class TradeServletAction implements Serializable {
 	private TradeServices tAction;
 
 	private String KAFKA_TOPIC = "daytrader-logins";
-	private KafkaProducer<String, String> kafkaProducer = null;
+	private String KAFKA_BROKER = null;
+	private String KAFKA_API_KEY = null;
 
 	@Inject
 	public TradeServletAction(@Any Instance<TradeServices> services) {
@@ -79,13 +80,8 @@ public class TradeServletAction implements Serializable {
 
 		// Initialize Kafka producer
 		KAFKA_TOPIC = System.getenv("KAFKA_TOPIC");
-		String broker = System.getenv("KAFKA_BOOTSTRAP_SERVER");
-		String apikey = System.getenv("KAFKA_API_KEY");
-		if (broker != null && apikey != null) {
-			Properties props = getClientConfiguration(broker, apikey);
-			// Initialise Kafka Producer
-			kafkaProducer = new KafkaProducer<>(props);
-		}
+		KAFKA_BROKER = System.getenv("KAFKA_BOOTSTRAP_SERVER");
+		KAFKA_API_KEY = System.getenv("KAFKA_API_KEY");
 	}
 
 	public TradeServletAction() {
@@ -370,46 +366,61 @@ public class TradeServletAction implements Serializable {
 				session.setAttribute("sessionCreationDate", new java.util.Date());
 
 				results = "Ready to Trade";
+				KafkaProducer<String, String> kafkaProducer = null;
+
+				// get Kafka producer
+				if (KAFKA_BROKER != null && KAFKA_API_KEY != null) {
+					Properties props = getClientConfiguration(KAFKA_BROKER, KAFKA_API_KEY);
+					// Initialise Kafka Producer
+					kafkaProducer = new KafkaProducer<>(props);
+				}
 
 				// send login message to Kafka
 				if (kafkaProducer != null) {
+					try {
+						// Create a producer record which will be sent
+						// to the Event Streams service, providing the topic
+						// name, key and message.
+						long time = System.currentTimeMillis();
 
-					// Create a producer record which will be sent
-					// to the Event Streams service, providing the topic
-					// name, key and message.
-					long time = System.currentTimeMillis();
+						String key = "login";
+						String value = userID;
 
-					String key = "login";
-					String value = userID;
+						// add timestamp to value
 
-					// add timestamp to value
-					
-					TimeZone tz = TimeZone.getTimeZone("UTC");
-					DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
-					df.setTimeZone(tz);
-					String datetime = df.format(new Date());
-					value = datetime + " - " + value;
-					
-					final ProducerRecord<String, String> record = new ProducerRecord<>(KAFKA_TOPIC, key, value);
+						TimeZone tz = TimeZone.getTimeZone("UTC");
+						DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
+						df.setTimeZone(tz);
+						String datetime = df.format(new Date());
+						value = datetime + " - " + value;
 
-					kafkaProducer.send(record, (metadata, exception) -> {
+						final ProducerRecord<String, String> record = new ProducerRecord<>(KAFKA_TOPIC, key, value);
 
-						long elapsedTime = System.currentTimeMillis() - time;
-						if (metadata != null) {
+						kafkaProducer.send(record, (metadata, exception) -> {
 
-							System.out.printf(
-									"sent to Kafka: record(key=%s value=%s) "
-											+ "meta(partition=%d, offset=%d) time=%d\n",
-									record.key(), record.value(), metadata.partition(), metadata.offset(), elapsedTime);
+							long elapsedTime = System.currentTimeMillis() - time;
+							if (metadata != null) {
 
-						} else {
-							exception.printStackTrace();
-						}
+								System.out.printf(
+										"sent to Kafka: record(key=%s value=%s) "
+												+ "meta(partition=%d, offset=%d) time=%d\n",
+										record.key(), record.value(), metadata.partition(), metadata.offset(),
+										elapsedTime);
 
-					});
+							} else {
+								exception.printStackTrace();
+							}
+
+						});
+
+					} finally {
+						kafkaProducer.flush();
+						kafkaProducer.close();
+					}
+
 				}
-
 				doHome(ctx, req, resp, userID, results);
+
 				return;
 			} else {
 				req.setAttribute("results", results + "\nCould not find account for + " + userID);
