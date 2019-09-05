@@ -370,7 +370,7 @@ public class TradeServletAction implements Serializable {
 				session.setAttribute("sessionCreationDate", new java.util.Date());
 
 				results = "Ready to Trade";
-
+				doHome(ctx, req, resp, userID, results);
 				// send login message to Kafka
 				if (kafkaProducer != null) {
 
@@ -409,7 +409,7 @@ public class TradeServletAction implements Serializable {
 					});
 				}
 
-				doHome(ctx, req, resp, userID, results);
+//				doHome(ctx, req, resp, userID, results);
 				return;
 			} else {
 				req.setAttribute("results", results + "\nCould not find account for + " + userID);
