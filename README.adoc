@@ -1,4 +1,30 @@
-# Java EE8: DayTrader8 Sample
+= Daytrader8 demo using IBM Cloud and Event Streams
+
+This demo application sends user ID to IBM Event Streams (Kafka) in IBM Cloud when user successfully logs in.
+
+* Clone this repo:
+** `git clone https://github.com/samisalkosuo/sample.daytrader8.git`
+* Set up Event Streams in IBM Cloud.
+** Some other Kafka installation may work too, but will not be tested.
+* Use CLI to login to IBM Cloud.
+** set environment variables to your environment:
+** ``KAFKA_BOOTSTRAP_SERVER=<comma separated list of brokers>`
+** ``KAFKA_API_KEY=<Event Streams API key>`
+* Optional, check Kafka producer code in `TradeServletAction.java`.
+* Execute following command to build the application:
+** `mvn clean package`
+* Run locally:
+** `mvn liberty:run-server`
+** To push and start in IBM Cloud:
+** `APP_NAME=daytrader8-demo-1`
+** `ibmcloud cf push $APP_NAME --no-start`
+** `ibmcloud cf set-env $APP_NAME KAFKA_BOOTSTRAP_SERVER $KAFKA_BOOTSTRAP_SERVER`
+** `ibmcloud cf set-env $APP_NAME KAFKA_API_KEY $KAFKA_API_KEY`
+** `ibmcloud cf start $APP_NAME`
+* The app URL is based on application name and IBM Cloud region
+** For example: `https://daytrader8-demo-1.eu-de.mybluemix.net/`
+
+= Java EE8: DayTrader8 Sample
 
 This sample contains the DayTrader 8 benchmark, which is an application built around the paradigm of an online stock trading system. The application allows users to login, view their portfolio, lookup stock quotes, and buy or sell stock shares. With the aid of a Web-based load driver such as Apache JMeter, the real-world workload provided by DayTrader can be used to measure and compare the performance of Java Platform, Enterprise Edition (Java EE) application servers offered by a variety of vendors. In addition to the full workload, the application also contains a set of primitives used for functional and performance testing of various Java EE components and common design patterns.
 
@@ -24,11 +50,11 @@ http://localhost:9080/daytrader
 
 
 
-## Notice
+== Notice
 
 © Copyright IBM Corporation 2019.
 
-## License
+== License
 
 ```text
 Licensed under the Apache License, Version 2.0 (the "License");
