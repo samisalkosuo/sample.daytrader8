@@ -1,5 +1,7 @@
 applications:
-   - name: daytrader8-sjs
+   - name: daytrader8-sdemo
      path: target/LibertyProject.zip
      memory: 512M
      instances: 1
+     env:
+       KAFKA_TOPIC: daytrader-logins
