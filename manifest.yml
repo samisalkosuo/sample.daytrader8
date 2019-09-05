@@ -2,6 +2,8 @@ applications:
    - name: daytrader8-sdemo
      path: target/LibertyProject.zip
      memory: 512M
-     instances: 1
+     instances: 2
      env:
        KAFKA_TOPIC: daytrader-logins
+       KAFKA_BOOTSTRAP_SERVER:  ((kafka_bootstrap_server))
+       KAFKA_API_KEY:  ((kafka_api_key))

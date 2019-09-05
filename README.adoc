@@ -16,11 +16,10 @@ This demo application sends user ID to IBM Event Streams (Kafka) in IBM Cloud wh
 * Run locally:
 ** `mvn liberty:run-server`
 ** To push and start in IBM Cloud:
-** `APP_NAME=daytrader8-demo-1`
-** `ibmcloud cf push $APP_NAME --no-start`
-** `ibmcloud cf set-env $APP_NAME KAFKA_BOOTSTRAP_SERVER $KAFKA_BOOTSTRAP_SERVER`
-** `ibmcloud cf set-env $APP_NAME KAFKA_API_KEY $KAFKA_API_KEY`
-** `ibmcloud cf start $APP_NAME`
+** Create file `vars.yml` with following lines:
+*** `kafka_bootstrap_server: <broker servers>`
+*** `kafka_api_key: <api key>`
+** `ibmcloud cf push --vars-file vars.yml daytrader8-demo-1`
 * The app URL is based on application name and IBM Cloud region
 ** For example: `https://daytrader8-demo-1.eu-de.mybluemix.net/`
 

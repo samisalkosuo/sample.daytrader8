@@ -10,3 +10,4 @@
 .factorypath
 .DS_Store
 env-variables.txt
+vars.yml
