@@ -383,13 +383,13 @@ public class TradeServletAction implements Serializable {
 					String value = userID;
 
 					// add timestamp to value
-					/*
+					
 					TimeZone tz = TimeZone.getTimeZone("UTC");
 					DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
 					df.setTimeZone(tz);
 					String datetime = df.format(new Date());
 					value = datetime + " - " + value;
-					*/
+					
 					final ProducerRecord<String, String> record = new ProducerRecord<>(KAFKA_TOPIC, key, value);
 
 					kafkaProducer.send(record, (metadata, exception) -> {
