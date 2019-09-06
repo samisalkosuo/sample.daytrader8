@@ -8,8 +8,8 @@ This demo application sends user ID to IBM Event Streams (Kafka) in IBM Cloud wh
 ** Some other Kafka installation may work too, but will not be tested.
 * Use CLI to login to IBM Cloud.
 ** set environment variables to your environment:
-** ``KAFKA_BOOTSTRAP_SERVER=<comma separated list of brokers>`
-** ``KAFKA_API_KEY=<Event Streams API key>`
+** `KAFKA_BOOTSTRAP_SERVER=<comma separated list of brokers>`
+** `KAFKA_API_KEY=<Event Streams API key>`
 * Optional, check Kafka producer code in link:src/main/java/com/ibm/websphere/samples/daytrader/web/servlet/TradeServletAction.java[src/main/java/com/ibm/websphere/samples/daytrader/web/servlet/TradeServletAction.java].
 * Optional, add/remove Hello World! link:src/main/webapp/contentHome.html[src/main/webapp/contentHome.html].
 * Execute following command to build the application:
