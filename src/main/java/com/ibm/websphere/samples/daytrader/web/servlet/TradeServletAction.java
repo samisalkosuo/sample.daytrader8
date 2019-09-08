@@ -86,9 +86,6 @@ public class TradeServletAction implements Serializable {
 		KAFKA_BROKER = System.getenv("KAFKA_BOOTSTRAP_SERVER");
 		KAFKA_API_KEY = System.getenv("KAFKA_API_KEY");
 
-		// Print Kafka topic and servers
-		System.out.println("KAFKA_TOPIC: "+KAFKA_TOPIC);
-		System.out.println("KAFKA_BOOTSTRAP_SERVER: "+KAFKA_BROKER);
 	}
 
 	public TradeServletAction() {
@@ -373,6 +370,10 @@ public class TradeServletAction implements Serializable {
 				session.setAttribute("sessionCreationDate", new java.util.Date());
 
 				results = "Ready to Trade";
+
+				new Thread(new Runnable() {
+					public void run() {
+						//Start a thread to send 
 				KafkaProducer<String, String> kafkaProducer = null;
 
 				// get Kafka producer
@@ -426,7 +427,11 @@ public class TradeServletAction implements Serializable {
 					}
 
 				}
-				doHome(ctx, req, resp, userID, results);
+			}
+		}).start();
+
+
+		doHome(ctx, req, resp, userID, results);
 
 				return;
 			} else {
