@@ -88,7 +88,7 @@ public class TradeServletAction implements Serializable {
 
 		// Print Kafka topic and servers
 		System.out.println("KAFKA_TOPIC: "+KAFKA_TOPIC);
-		System.out.println("KAFKA_BOOTSTRAP_SERVER: "+KAFKA_NROKER);
+		System.out.println("KAFKA_BOOTSTRAP_SERVER: "+KAFKA_BROKER);
 	}
 
 	public TradeServletAction() {
