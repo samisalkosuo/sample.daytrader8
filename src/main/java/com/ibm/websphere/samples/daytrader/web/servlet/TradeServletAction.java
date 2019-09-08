@@ -68,6 +68,9 @@ public class TradeServletAction implements Serializable {
 
 	private TradeServices tAction;
 
+	//set to false to disable Kafka producer 
+	private boolean DO_KAFKA = true;
+
 	private String KAFKA_TOPIC = "daytrader-logins";
 	private String KAFKA_BROKER = null;
 	private String KAFKA_API_KEY = null;
@@ -82,6 +85,10 @@ public class TradeServletAction implements Serializable {
 		KAFKA_TOPIC = System.getenv("KAFKA_TOPIC");
 		KAFKA_BROKER = System.getenv("KAFKA_BOOTSTRAP_SERVER");
 		KAFKA_API_KEY = System.getenv("KAFKA_API_KEY");
+
+		// Print Kafka topic and servers
+		System.out.println("KAFKA_TOPIC: "+KAFKA_TOPIC);
+		System.out.println("KAFKA_BOOTSTRAP_SERVER: "+KAFKA_NROKER);
 	}
 
 	public TradeServletAction() {
@@ -375,11 +382,8 @@ public class TradeServletAction implements Serializable {
 					kafkaProducer = new KafkaProducer<>(props);
 				}
 
-				//set to false to disable Kafka producer 
-				boolean doKafka = true;
-
 				// send login message to Kafka
-				if (doKafka == true && kafkaProducer != null) {
+				if (DO_KAFKA == true && kafkaProducer != null) {
 					try {
 						// Create a producer record which will be sent
 						// to the Event Streams service, providing the topic
