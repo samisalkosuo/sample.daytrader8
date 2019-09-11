@@ -1,6 +1,7 @@
 = Daytrader8 demo using IBM Cloud and Event Streams
 
 This demo application sends user ID to IBM Event Streams (Kafka) in IBM Cloud when user successfully logs in.
+The scenario where this demo application is used is described here: https://github.com/samisalkosuo/ibm-cloud-demo.
 
 * Clone this repo:
 ** `git clone https://github.com/samisalkosuo/sample.daytrader8.git`
